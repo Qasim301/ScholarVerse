@@ -1,0 +1,27 @@
+[theme]
+primaryColor = "#546E7A"
+backgroundColor = "#FAFAFA"
+secondaryBackgroundColor = "#ECEFF1"
+textColor = "#212121"
+font = "sans serif"
+
+borderColor = "#CFD8DC"
+linkColor = "#1565C0"
+successColor = "#388E3C"
+errorColor = "#D32F2F"
+warningColor = "#FBC02D"
+
+[server]
+headless = true
+runOnSave = true
+
+[client]
+toolbarMode = "minimal"
+
+[global]
+hideStreamlitLogo = true
+showSidebarNavigation = true
+disableWidgetStateWarnings = true
+
+[ui]
+animations = true
