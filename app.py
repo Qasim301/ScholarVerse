@@ -11,18 +11,24 @@ MAKE_WEBHOOK_URL = st.secrets["MAKE_WEBHOOK_URL"]
 
 st.set_page_config(page_title="ScholarVerse | AI University & Scholarship Finder", layout="centered")
 
-# --- Helper Function for Google Custom Search ---
-def fetch_results(query, start=1, num=RESULTS_PER_PAGE):
+# --- Helper Functions for Google Custom Search (replaced) ---
+def fetch_raw_results(query, start=1, num=10):
+    """
+    Returns raw 'items' from Google CSE response and the reported total.
+    Use a larger num (<=10 for CSE) to allow collecting enough valid results.
+    """
     if not API_KEY or not CX:
         st.error("Missing API key or CX value.")
         return [], 0
 
     url = f"https://www.googleapis.com/customsearch/v1?key={API_KEY}&cx={CX}&q={query}&num={num}&start={start}"
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
         total = int(data.get("searchInformation", {}).get("totalResults", 0))
+        items = data.get("items", []) or []
+        return items, total
     except requests.exceptions.RequestException as e:
         st.error(f"Network error: {e}")
         return [], 0
@@ -30,20 +36,88 @@ def fetch_results(query, start=1, num=RESULTS_PER_PAGE):
         st.error(f"Unexpected error: {e}")
         return [], 0
 
-    items = data.get("items", [])
-    results = []
-    for item in items:
-        image = item.get("pagemap", {}).get("cse_image", [{}])[0].get("src", "")
-        if not image:
-            image = item.get("pagemap", {}).get("organization", [{}])[0].get("logo", "")
-        results.append({
-            "title": item["title"],
-            "link": item["link"],
-            "snippet": item.get("snippet", ""),
-            "image": image or "https://via.placeholder.com/300x200.png?text=No+Image"
-        })
-    return results, total
 
+def transform_item(item):
+    """Convert a raw CSE item into your result dict (same fields you used)."""
+    image = item.get("pagemap", {}).get("cse_image", [{}])[0].get("src", "")
+    if not image:
+        image = item.get("pagemap", {}).get("organization", [{}])[0].get("logo", "")
+    return {
+        "title": item.get("title", ""),
+        "link": item.get("link", ""),
+        "snippet": item.get("snippet", ""),
+        "image": image or "https://via.placeholder.com/300x200.png?text=No+Image"
+    }
+
+
+def get_root_domain(url):
+    try:
+        domain = urlparse(url).netloc.lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        return domain
+    except:
+        return url
+
+
+def collect_next_batch(target=RESULTS_PER_PAGE):
+    """
+    Collect up to `target` new, deduplicated results.
+    This will call the API repeatedly (in chunks) until we either have `target`
+    or exhaust the available results.
+    It updates st.session_state.start_index to the next API start (consumed items),
+    and returns the list of new result dicts and the reported total.
+    """
+    if not st.session_state.current_query:
+        return [], 0
+
+    start = st.session_state.start_index or 1
+    total_available = st.session_state.total_results or 0
+    collected = []
+    # Start with domains already shown
+    seen_domains = set(get_root_domain(r["link"]) for r in st.session_state.all_results)
+
+    # Use a chunk size for each API call; Google CSE allows up to 10
+    api_chunk = max(6, RESULTS_PER_PAGE * 2)
+    api_chunk = min(api_chunk, 10)
+
+    while len(collected) < target:
+        if total_available and start > total_available:
+            # no more results
+            break
+
+        items, total = fetch_raw_results(st.session_state.current_query, start=start, num=api_chunk)
+        total_available = total or total_available
+        if not items:
+            break
+
+        # Advance start by how many items the API returned
+        start += len(items)
+
+        for item in items:
+            try:
+                result = transform_item(item)
+                domain = get_root_domain(result["link"])
+            except Exception:
+                continue
+
+            if domain in seen_domains:
+                continue
+
+            snippet = (result.get("snippet") or "").lower()
+            path_parts = len(urlparse(result["link"]).path.strip("/").split("/"))
+            if any(k in snippet for k in ["program", "course", "curriculum", "department", "admissions", "overview"]) \
+               or path_parts <= 1:
+                collected.append(result)
+                seen_domains.add(domain)
+
+            if len(collected) >= target:
+                break
+
+    # Update session_state properly: start_index should reflect API items consumed (next start)
+    st.session_state.start_index = start
+    st.session_state.total_results = total_available
+    return collected, total_available
 
 # --- Send Data to Make.com (Gemini Analysis) ---
 def send_to_make(profile_data, search_results):
@@ -188,16 +262,6 @@ if "has_searched" not in st.session_state:
     st.session_state.has_searched = False
 
 
-def get_root_domain(url):
-    try:
-        domain = urlparse(url).netloc.lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        return domain
-    except:
-        return url
-
-
 def handle_search(is_load_more=False):
     if not is_load_more:
         base_query = query_input.strip()
@@ -238,28 +302,15 @@ def handle_search(is_load_more=False):
         st.session_state.current_query = refined_query
         st.session_state.start_index = 1
         st.session_state.all_results = []
+        st.session_state.total_results = 0
         st.session_state.has_searched = True
 
-    results, total = fetch_results(st.session_state.current_query, start=st.session_state.start_index)
+    # Now collect up to RESULTS_PER_PAGE new results (deduped) using the loop
+    new_results, total = collect_next_batch(RESULTS_PER_PAGE)
 
-    new_results_combined = st.session_state.all_results + results
-    unique_domains = set()
-    deduplicated_results = []
-
-    for r in new_results_combined:
-        domain = get_root_domain(r["link"])
-        snippet = r.get("snippet", "").lower()
-        if domain in unique_domains:
-            continue
-        unique_domains.add(domain)
-        if any(k in snippet for k in ["program", "course", "curriculum", "department", "admissions", "overview"]):
-            deduplicated_results.append(r)
-        elif len(urlparse(r["link"]).path.strip("/").split("/")) <= 1:
-            deduplicated_results.append(r)
-
-    st.session_state.all_results = deduplicated_results
+    # Append new results
+    st.session_state.all_results = st.session_state.all_results + new_results
     st.session_state.total_results = total
-    st.session_state.start_index += RESULTS_PER_PAGE
 
 
 if search_clicked:
