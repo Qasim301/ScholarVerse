@@ -306,7 +306,7 @@ Fill out your details below and let ScholarVerse’s AI evaluate your profile.
 with st.form("profile_form"):
     col1, col2 = st.columns(2)
     with col1:
-        major = st.text_input("Current Degree", placeholder="e.g. CS, BBA")
+        major = st.text_input("Current Degree", placeholder="e.g. BSCS, MBA")
         skills = st.text_input("Key Skills / Courses", placeholder="e.g. Data analyzing, leadership")
     with col2:
         gpa = st.text_input("GPA / Grades", placeholder="e.g. 3.7 / 4.0 or 85%")
