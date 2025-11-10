@@ -354,7 +354,7 @@ Want to know which universities best fit your background and how to improve your
 Fill out your details below and let ScholarVerse’s AI evaluate your profile.
 """)
 
-with st.form("profile_form", enter_to_submit=False):):
+with st.form("profile_form", enter_to_submit=False):
     col1, col2 = st.columns(2)
     with col1:
         major = st.text_input("Current Degree", placeholder="e.g. BSCS, MBA")
