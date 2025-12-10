@@ -3,7 +3,7 @@ import requests
 import json
 from urllib.parse import urlparse
 
-# --- Configuration ---
+# --- Configuration --
 API_KEY = st.secrets["GOOGLE_API_KEY"]
 CX = st.secrets["CSE_ID"]
 RESULTS_PER_PAGE = 6
